@@ -83,18 +83,11 @@ const placeOrder = async (req, res) => {
 
     cart.items = [];
     cart.totalAmount = 0;
-    cart.status = "converted";
+    cart.status = "active";
     await cart.save();
 
-    await Cart.create({
-      customer: req.user._id,
-      items: [],
-      totalAmount: 0,
-      status: "active",
-    });
-
     const populatedOrder = await Order.findById(order._id)
-      .populate("customer", "firstName lastName email username")
+      .populate("customer", "firstName lastName email username role")
       .populate("items.product", "name productCode");
 
     return res.status(201).json({
@@ -113,12 +106,13 @@ const placeOrder = async (req, res) => {
 const getMyOrders = async (req, res) => {
   try {
     const orders = await Order.find({ customer: req.user._id })
+      .populate("customer", "firstName lastName email username role")
       .populate("items.product", "name productCode")
       .sort({ createdAt: -1 });
 
     return res.status(200).json({
       success: true,
-      message: "Customer orders fetched successfully",
+      message: "My orders fetched successfully",
       data: orders,
     });
   } catch (error) {
@@ -132,7 +126,7 @@ const getMyOrders = async (req, res) => {
 const getOrderById = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
-      .populate("customer", "firstName lastName email username")
+      .populate("customer", "firstName lastName email username role")
       .populate("items.product", "name productCode");
 
     if (!order) {
@@ -180,7 +174,7 @@ const getAllOrders = async (req, res) => {
     }
 
     const orders = await Order.find(filter)
-      .populate("customer", "firstName lastName email username")
+      .populate("customer", "firstName lastName email username role")
       .populate("items.product", "name productCode")
       .sort({ createdAt: -1 });
 

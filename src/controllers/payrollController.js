@@ -83,7 +83,7 @@ const createPayroll = async (req, res) => {
 
     const populatedPayroll = await Payroll.findById(payroll._id).populate(
       "employee",
-      "employeeCode firstName lastName email department designation"
+      "employeeCode firstName lastName email department designation linkedUser"
     );
 
     return res.status(201).json({
@@ -118,7 +118,10 @@ const getAllPayrolls = async (req, res) => {
     }
 
     const payrolls = await Payroll.find(filter)
-      .populate("employee", "employeeCode firstName lastName email department designation")
+      .populate(
+        "employee",
+        "employeeCode firstName lastName email department designation linkedUser"
+      )
       .sort({ createdAt: -1 });
 
     return res.status(200).json({
@@ -138,7 +141,7 @@ const getPayrollById = async (req, res) => {
   try {
     const payroll = await Payroll.findById(req.params.id).populate(
       "employee",
-      "employeeCode firstName lastName email department designation"
+      "employeeCode firstName lastName email department designation linkedUser"
     );
 
     if (!payroll) {
@@ -164,7 +167,10 @@ const getPayrollById = async (req, res) => {
 const getPayrollsByEmployee = async (req, res) => {
   try {
     const payrolls = await Payroll.find({ employee: req.params.employeeId })
-      .populate("employee", "employeeCode firstName lastName email department designation")
+      .populate(
+        "employee",
+        "employeeCode firstName lastName email department designation linkedUser"
+      )
       .sort({ createdAt: -1 });
 
     return res.status(200).json({
@@ -172,6 +178,109 @@ const getPayrollsByEmployee = async (req, res) => {
       message: "Employee payrolls fetched successfully",
       data: payrolls,
     });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+const getMyPayrolls = async (req, res) => {
+  try {
+    const employee = await Employee.findOne({ linkedUser: req.user._id });
+
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: "Employee record not found for this user",
+      });
+    }
+
+    const payrolls = await Payroll.find({ employee: employee._id })
+      .populate(
+        "employee",
+        "employeeCode firstName lastName email department designation linkedUser"
+      )
+      .sort({ payrollYear: -1, createdAt: -1 });
+
+    return res.status(200).json({
+      success: true,
+      message: "My payrolls fetched successfully",
+      data: payrolls,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+const downloadMyPayslip = async (req, res) => {
+  try {
+    const employee = await Employee.findOne({ linkedUser: req.user._id });
+
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: "Employee record not found for this user",
+      });
+    }
+
+    const payroll = await Payroll.findById(req.params.id).populate(
+      "employee",
+      "employeeCode firstName lastName email department designation"
+    );
+
+    if (!payroll) {
+      return res.status(404).json({
+        success: false,
+        message: "Payroll not found",
+      });
+    }
+
+    if (payroll.employee._id.toString() !== employee._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied to this payslip",
+      });
+    }
+
+    const payslipText = `
+Tea Factory Management System - Payslip
+
+Payroll Number: ${payroll.payrollNumber}
+Employee Code: ${payroll.employee.employeeCode}
+Employee Name: ${payroll.employee.firstName} ${payroll.employee.lastName}
+Email: ${payroll.employee.email}
+Department: ${payroll.employee.department}
+Designation: ${payroll.employee.designation}
+
+Payroll Month: ${payroll.payrollMonth}
+Payroll Year: ${payroll.payrollYear}
+
+Basic Salary: ${payroll.basicSalary}
+Allowance: ${payroll.allowance}
+Overtime Amount: ${payroll.overtimeAmount}
+Bonus Amount: ${payroll.bonusAmount}
+Deduction Amount: ${payroll.deductionAmount}
+Gross Salary: ${payroll.grossSalary}
+Net Salary: ${payroll.netSalary}
+Payment Status: ${payroll.paymentStatus}
+Paid At: ${payroll.paidAt ? new Date(payroll.paidAt).toISOString() : "Not paid yet"}
+Note: ${payroll.note || ""}
+
+Generated At: ${new Date().toISOString()}
+    `.trim();
+
+    res.setHeader("Content-Type", "text/plain");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="payslip-${payroll.payrollMonth}-${payroll.payrollYear}.txt"`
+    );
+
+    return res.status(200).send(payslipText);
   } catch (error) {
     return res.status(500).json({
       success: false,
@@ -227,5 +336,7 @@ export {
   getAllPayrolls,
   getPayrollById,
   getPayrollsByEmployee,
+  getMyPayrolls,
+  downloadMyPayslip,
   updatePayrollStatus,
 };

@@ -165,6 +165,33 @@ const getEmployeeById = async (req, res) => {
   }
 };
 
+const getMyEmployeeProfile = async (req, res) => {
+  try {
+    const employee = await Employee.findOne({ linkedUser: req.user._id }).populate(
+      "linkedUser",
+      "firstName lastName email username role phone address profileImage"
+    );
+
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: "Employee profile not found for this user",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "My employee profile fetched successfully",
+      data: employee,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
 const updateEmployee = async (req, res) => {
   try {
     const {
@@ -207,7 +234,8 @@ const updateEmployee = async (req, res) => {
     employee.allowance = allowance ?? employee.allowance;
     employee.epfNumber = epfNumber ?? employee.epfNumber;
     employee.bankName = bankName ?? employee.bankName;
-    employee.bankAccountNumber = bankAccountNumber ?? employee.bankAccountNumber;
+    employee.bankAccountNumber =
+      bankAccountNumber ?? employee.bankAccountNumber;
     employee.linkedUser = linkedUser ?? employee.linkedUser;
 
     if (employmentStatus) {
@@ -269,6 +297,7 @@ export {
   createEmployee,
   getAllEmployees,
   getEmployeeById,
+  getMyEmployeeProfile,
   updateEmployee,
   deactivateEmployee,
 };
