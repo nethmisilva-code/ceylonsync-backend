@@ -1,10 +1,18 @@
 import Cart from "../models/Cart.js";
 import Order from "../models/Order.js";
 import Product from "../models/Product.js";
+import Payment from "../models/Payment.js";
+import Invoice from "../models/Invoice.js";
+import { createInvoiceForOrder } from "./paymentController.js";
 
 const generateOrderNumber = () => {
   const random = Math.floor(1000 + Math.random() * 9000);
   return `ORD-${Date.now()}-${random}`;
+};
+
+const generatePaymentNumber = () => {
+  const random = Math.floor(1000 + Math.random() * 9000);
+  return `PAY-${Date.now()}-${random}`;
 };
 
 const placeOrder = async (req, res) => {
@@ -105,7 +113,14 @@ const placeOrder = async (req, res) => {
 
 const getMyOrders = async (req, res) => {
   try {
-    const orders = await Order.find({ customer: req.user._id })
+    const { orderStatus, paymentStatus } = req.query;
+
+    const filter = { customer: req.user._id };
+
+    if (orderStatus) filter.orderStatus = orderStatus;
+    if (paymentStatus) filter.paymentStatus = paymentStatus;
+
+    const orders = await Order.find(filter)
       .populate("customer", "firstName lastName email username role")
       .populate("items.product", "name productCode")
       .sort({ createdAt: -1 });
@@ -146,10 +161,17 @@ const getOrderById = async (req, res) => {
       });
     }
 
+    const payment = await Payment.findOne({ order: order._id });
+    const invoice = await Invoice.findOne({ order: order._id });
+
     return res.status(200).json({
       success: true,
       message: "Order fetched successfully",
-      data: order,
+      data: {
+        ...order.toObject(),
+        payment,
+        invoice,
+      },
     });
   } catch (error) {
     return res.status(500).json({
@@ -165,13 +187,8 @@ const getAllOrders = async (req, res) => {
 
     const filter = {};
 
-    if (orderStatus) {
-      filter.orderStatus = orderStatus;
-    }
-
-    if (paymentStatus) {
-      filter.paymentStatus = paymentStatus;
-    }
+    if (orderStatus) filter.orderStatus = orderStatus;
+    if (paymentStatus) filter.paymentStatus = paymentStatus;
 
     const orders = await Order.find(filter)
       .populate("customer", "firstName lastName email username role")
@@ -193,7 +210,7 @@ const getAllOrders = async (req, res) => {
 
 const updateOrderStatus = async (req, res) => {
   try {
-    const { orderStatus, paymentStatus } = req.body;
+    const { orderStatus, paymentStatus, note } = req.body;
 
     const order = await Order.findById(req.params.id);
 
@@ -224,6 +241,8 @@ const updateOrderStatus = async (req, res) => {
       order.orderStatus = orderStatus;
     }
 
+    let payment = await Payment.findOne({ order: order._id });
+
     if (paymentStatus) {
       const allowedPaymentStatuses = ["pending", "paid", "failed"];
 
@@ -235,15 +254,103 @@ const updateOrderStatus = async (req, res) => {
       }
 
       order.paymentStatus = paymentStatus;
+
+      if (!payment) {
+        payment = await Payment.create({
+          paymentNumber: generatePaymentNumber(),
+          order: order._id,
+          customer: order.customer,
+          amount: order.totalAmount,
+          paymentMethod: "cash",
+          paymentStatus,
+          transactionReference: "",
+          receiptImage: "",
+          adminReviewNote: "Auto-created from order status update",
+          note: "Auto-created from order status update",
+          createdBy: req.user._id,
+          updatedBy: req.user._id,
+          reviewedAt: new Date(),
+          paidAt: paymentStatus === "paid" ? new Date() : null,
+        });
+      } else {
+        payment.paymentStatus = paymentStatus;
+        payment.updatedBy = req.user._id;
+        payment.reviewedAt = new Date();
+        payment.adminReviewNote =
+          payment.adminReviewNote || "Updated from order management";
+
+        if (paymentStatus === "paid") {
+          payment.paidAt = new Date();
+        } else {
+          payment.paidAt = null;
+        }
+
+        await payment.save();
+      }
+
+      if (paymentStatus === "failed") {
+        if (!["cancelled", "delivered"].includes(order.orderStatus)) {
+          order.orderStatus = "pending";
+        }
+      }
+
+      if (paymentStatus === "pending") {
+        if (!["cancelled", "delivered"].includes(order.orderStatus)) {
+          order.orderStatus = "pending";
+        }
+      }
+
+      if (paymentStatus === "paid") {
+        if (payment.paymentMethod === "bank-transfer") {
+          if (order.orderStatus === "pending") {
+            order.orderStatus = "processing";
+          }
+        }
+
+        if (payment.paymentMethod === "cash") {
+          if (order.orderStatus === "pending") {
+            order.orderStatus = "confirmed";
+          }
+        }
+      }
+    }
+
+    if (typeof note === "string") {
+      order.note = note;
     }
 
     order.updatedBy = req.user._id;
     await order.save();
 
+    if (
+      order.orderStatus === "delivered" &&
+      order.paymentStatus === "paid" &&
+      payment &&
+      payment.paymentMethod === "cash"
+    ) {
+      await createInvoiceForOrder({
+        order,
+        payment,
+        userId: req.user._id,
+        note: "Generated after cash payment confirmation and delivery",
+      });
+    }
+
+    const updatedOrder = await Order.findById(order._id)
+      .populate("customer", "firstName lastName email username role")
+      .populate("items.product", "name productCode");
+
+    const updatedPayment = await Payment.findOne({ order: order._id });
+    const updatedInvoice = await Invoice.findOne({ order: order._id });
+
     return res.status(200).json({
       success: true,
       message: "Order status updated successfully",
-      data: order,
+      data: {
+        ...updatedOrder.toObject(),
+        payment: updatedPayment,
+        invoice: updatedInvoice,
+      },
     });
   } catch (error) {
     return res.status(500).json({

@@ -84,14 +84,24 @@ const invoiceSchema = new mongoose.Schema(
     },
     invoiceStatus: {
       type: String,
-      enum: ["issued"],
-      default: "issued",
+      enum: ["paid"],
+      default: "paid",
     },
     issuedAt: {
       type: Date,
       default: Date.now,
     },
+    note: {
+      type: String,
+      default: "",
+      trim: true,
+    },
     createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    updatedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null,

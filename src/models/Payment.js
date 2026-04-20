@@ -28,7 +28,7 @@ const paymentSchema = new mongoose.Schema(
     paymentMethod: {
       type: String,
       required: true,
-      enum: ["cash", "card", "bank-transfer", "online"],
+      enum: ["cash", "bank-transfer"],
     },
     paymentStatus: {
       type: String,
@@ -39,6 +39,20 @@ const paymentSchema = new mongoose.Schema(
       type: String,
       default: "",
       trim: true,
+    },
+    receiptImage: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    adminReviewNote: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    reviewedAt: {
+      type: Date,
+      default: null,
     },
     paidAt: {
       type: Date,

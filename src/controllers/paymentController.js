@@ -12,14 +12,88 @@ const generateInvoiceNumber = () => {
   return `INV-${Date.now()}-${random}`;
 };
 
+const createInvoiceForOrder = async ({ order, payment, userId, note = "" }) => {
+  const existingInvoice = await Invoice.findOne({ order: order._id });
+
+  if (existingInvoice) {
+    existingInvoice.payment = payment._id;
+    existingInvoice.invoiceStatus = "paid";
+    existingInvoice.issuedAt = payment.paidAt || new Date();
+    existingInvoice.note = note || existingInvoice.note;
+    existingInvoice.updatedBy = userId;
+    await existingInvoice.save();
+    return existingInvoice;
+  }
+
+  if (
+    !order.customer ||
+    !order.items ||
+    order.items.length === 0 ||
+    !order.shippingAddress ||
+    !order.contactPhone
+  ) {
+    throw new Error("Cannot generate invoice because order data is incomplete");
+  }
+
+  const invoice = await Invoice.create({
+    invoiceNumber: generateInvoiceNumber(),
+    order: order._id,
+    payment: payment._id,
+    customer: order.customer,
+    items: order.items.map((item) => ({
+      product: item.product,
+      name: item.name,
+      productCode: item.productCode,
+      unitPrice: item.unitPrice,
+      quantity: item.quantity,
+      subtotal: item.subtotal,
+    })),
+    totalAmount: order.totalAmount,
+    billingAddress: order.shippingAddress,
+    contactPhone: order.contactPhone,
+    invoiceStatus: "paid",
+    issuedAt: payment.paidAt || new Date(),
+    note,
+    createdBy: userId,
+    updatedBy: userId,
+  });
+
+  return invoice;
+};
+
 const createPayment = async (req, res) => {
   try {
-    const { orderId, paymentMethod, transactionReference, note } = req.body;
+    const {
+      orderId,
+      paymentMethod,
+      transactionReference = "",
+      note = "",
+    } = req.body;
+
+    const receiptImage = req.file
+      ? `/uploads/receipts/${req.file.filename}`
+      : "";
 
     if (!orderId || !paymentMethod) {
       return res.status(400).json({
         success: false,
         message: "Order ID and payment method are required",
+      });
+    }
+
+    const allowedMethods = ["cash", "bank-transfer"];
+
+    if (!allowedMethods.includes(paymentMethod)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid payment method. Only cash and bank-transfer are allowed",
+      });
+    }
+
+    if (paymentMethod === "bank-transfer" && !receiptImage) {
+      return res.status(400).json({
+        success: false,
+        message: "Bank transfer receipt is required",
       });
     }
 
@@ -56,17 +130,26 @@ const createPayment = async (req, res) => {
       paymentMethod,
       paymentStatus: "pending",
       transactionReference: transactionReference ?? "",
+      receiptImage: paymentMethod === "bank-transfer" ? receiptImage : "",
       note: note ?? "",
       createdBy: req.user._id,
       updatedBy: req.user._id,
     });
 
+    order.paymentStatus = "pending";
+    order.updatedBy = req.user._id;
+    await order.save();
+
     return res.status(201).json({
       success: true,
-      message: "Payment created successfully",
+      message:
+        paymentMethod === "bank-transfer"
+          ? "Payment submitted successfully. Waiting for admin approval"
+          : "Cash payment request created successfully",
       data: payment,
     });
   } catch (error) {
+    console.error("createPayment error:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -76,16 +159,24 @@ const createPayment = async (req, res) => {
 
 const getMyPayments = async (req, res) => {
   try {
-    const payments = await Payment.find({ customer: req.user._id })
+    const { paymentStatus, paymentMethod } = req.query;
+
+    const filter = { customer: req.user._id };
+
+    if (paymentStatus) filter.paymentStatus = paymentStatus;
+    if (paymentMethod) filter.paymentMethod = paymentMethod;
+
+    const payments = await Payment.find(filter)
       .populate("order", "orderNumber totalAmount orderStatus paymentStatus")
       .sort({ createdAt: -1 });
 
     return res.status(200).json({
       success: true,
-      message: "Customer payments fetched successfully",
+      message: "Customer payment history fetched successfully",
       data: payments,
     });
   } catch (error) {
+    console.error("getMyPayments error:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -99,25 +190,24 @@ const getAllPayments = async (req, res) => {
 
     const filter = {};
 
-    if (paymentStatus) {
-      filter.paymentStatus = paymentStatus;
-    }
-
-    if (paymentMethod) {
-      filter.paymentMethod = paymentMethod;
-    }
+    if (paymentStatus) filter.paymentStatus = paymentStatus;
+    if (paymentMethod) filter.paymentMethod = paymentMethod;
 
     const payments = await Payment.find(filter)
       .populate("customer", "firstName lastName email username")
-      .populate("order", "orderNumber totalAmount orderStatus paymentStatus")
+      .populate(
+        "order",
+        "orderNumber totalAmount orderStatus paymentStatus shippingAddress contactPhone"
+      )
       .sort({ createdAt: -1 });
 
     return res.status(200).json({
       success: true,
-      message: "All payments fetched successfully",
+      message: "All payment history fetched successfully",
       data: payments,
     });
   } catch (error) {
+    console.error("getAllPayments error:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -127,16 +217,8 @@ const getAllPayments = async (req, res) => {
 
 const updatePaymentStatus = async (req, res) => {
   try {
-    const { paymentStatus, transactionReference } = req.body;
-
-    const payment = await Payment.findById(req.params.id).populate("order");
-
-    if (!payment) {
-      return res.status(404).json({
-        success: false,
-        message: "Payment not found",
-      });
-    }
+    const { paymentStatus, transactionReference, note, adminReviewNote } =
+      req.body;
 
     const allowedStatuses = ["pending", "paid", "failed"];
 
@@ -147,58 +229,100 @@ const updatePaymentStatus = async (req, res) => {
       });
     }
 
-    payment.paymentStatus = paymentStatus;
-    payment.transactionReference =
-      transactionReference ?? payment.transactionReference;
-    payment.updatedBy = req.user._id;
+    const payment = await Payment.findById(req.params.id).populate("order");
 
-    if (paymentStatus === "paid") {
-      payment.paidAt = new Date();
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        message: "Payment not found",
+      });
     }
-
-    await payment.save();
 
     const order = await Order.findById(payment.order._id);
 
-    if (order) {
-      order.paymentStatus = paymentStatus;
-      order.updatedBy = req.user._id;
-      await order.save();
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Related order not found",
+      });
+    }
+
+    if (
+      payment.paymentMethod === "bank-transfer" &&
+      paymentStatus === "paid" &&
+      !payment.receiptImage
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot approve bank transfer without a receipt",
+      });
+    }
+
+    payment.paymentStatus = paymentStatus;
+    payment.transactionReference =
+      transactionReference ?? payment.transactionReference;
+    payment.note = note ?? payment.note;
+    payment.adminReviewNote = adminReviewNote ?? payment.adminReviewNote;
+    payment.updatedBy = req.user._id;
+    payment.reviewedAt = new Date();
+    payment.paidAt = paymentStatus === "paid" ? new Date() : null;
+
+    await payment.save();
+
+    order.paymentStatus = paymentStatus;
+    order.updatedBy = req.user._id;
+
+    if (paymentStatus === "failed") {
+      if (!["cancelled", "delivered"].includes(order.orderStatus)) {
+        order.orderStatus = "pending";
+      }
+    }
+
+    if (paymentStatus === "pending") {
+      if (!["cancelled", "delivered"].includes(order.orderStatus)) {
+        order.orderStatus = "pending";
+      }
     }
 
     if (paymentStatus === "paid") {
-      const existingInvoice = await Invoice.findOne({ payment: payment._id });
+      if (payment.paymentMethod === "bank-transfer") {
+        if (order.orderStatus === "pending") {
+          order.orderStatus = "processing";
+        }
+      }
 
-      if (!existingInvoice && order) {
-        await Invoice.create({
-          invoiceNumber: generateInvoiceNumber(),
-          order: order._id,
-          payment: payment._id,
-          customer: order.customer,
-          items: order.items.map((item) => ({
-            product: item.product,
-            name: item.name,
-            productCode: item.productCode,
-            unitPrice: item.unitPrice,
-            quantity: item.quantity,
-            subtotal: item.subtotal,
-          })),
-          totalAmount: order.totalAmount,
-          billingAddress: order.shippingAddress,
-          contactPhone: order.contactPhone,
-          invoiceStatus: "issued",
-          issuedAt: new Date(),
-          createdBy: req.user._id,
-        });
+      if (payment.paymentMethod === "cash") {
+        if (order.orderStatus === "pending") {
+          order.orderStatus = "confirmed";
+        }
       }
     }
+
+    await order.save();
+
+    if (paymentStatus === "paid" && payment.paymentMethod === "bank-transfer") {
+      await createInvoiceForOrder({
+        order,
+        payment,
+        userId: req.user._id,
+        note: "Generated after bank transfer approval",
+      });
+    }
+
+    const updatedPayment = await Payment.findById(payment._id)
+      .populate("customer", "firstName lastName email username")
+      .populate(
+        "order",
+        "orderNumber totalAmount orderStatus paymentStatus shippingAddress contactPhone"
+      );
 
     return res.status(200).json({
       success: true,
       message: "Payment status updated successfully",
-      data: payment,
+      data: updatedPayment,
     });
   } catch (error) {
+    console.error("updatePaymentStatus error:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -211,4 +335,5 @@ export {
   getMyPayments,
   getAllPayments,
   updatePaymentStatus,
+  createInvoiceForOrder,
 };

@@ -1,9 +1,31 @@
+import PDFDocument from "pdfkit";
 import Employee from "../models/Employee.js";
 import Payroll from "../models/Payroll.js";
 
 const generatePayrollNumber = () => {
   const random = Math.floor(1000 + Math.random() * 9000);
   return `PRL-${Date.now()}-${random}`;
+};
+
+const calculatePayrollValues = ({
+  basicSalary = 0,
+  allowance = 0,
+  overtimeAmount = 0,
+  bonusAmount = 0,
+  deductionAmount = 0,
+}) => {
+  const grossSalary =
+    Number(basicSalary) +
+    Number(allowance) +
+    Number(overtimeAmount) +
+    Number(bonusAmount);
+
+  const netSalary = grossSalary - Number(deductionAmount);
+
+  return {
+    grossSalary,
+    netSalary,
+  };
 };
 
 const createPayroll = async (req, res) => {
@@ -47,14 +69,19 @@ const createPayroll = async (req, res) => {
       });
     }
 
-    const basicSalary = employee.basicSalary;
-    const allowance = employee.allowance || 0;
-    const overtime = overtimeAmount ?? 0;
-    const bonus = bonusAmount ?? 0;
-    const deduction = deductionAmount ?? 0;
+    const basicSalary = Number(employee.basicSalary || 0);
+    const allowance = Number(employee.allowance || 0);
+    const overtime = Number(overtimeAmount ?? 0);
+    const bonus = Number(bonusAmount ?? 0);
+    const deduction = Number(deductionAmount ?? 0);
 
-    const grossSalary = basicSalary + allowance + overtime + bonus;
-    const netSalary = grossSalary - deduction;
+    const { grossSalary, netSalary } = calculatePayrollValues({
+      basicSalary,
+      allowance,
+      overtimeAmount: overtime,
+      bonusAmount: bonus,
+      deductionAmount: deduction,
+    });
 
     if (netSalary < 0) {
       return res.status(400).json({
@@ -83,7 +110,7 @@ const createPayroll = async (req, res) => {
 
     const populatedPayroll = await Payroll.findById(payroll._id).populate(
       "employee",
-      "employeeCode firstName lastName email department designation linkedUser"
+      "employeeCode firstName lastName email department designation linkedUser phone bankName bankAccountNumber epfNumber"
     );
 
     return res.status(201).json({
@@ -120,7 +147,7 @@ const getAllPayrolls = async (req, res) => {
     const payrolls = await Payroll.find(filter)
       .populate(
         "employee",
-        "employeeCode firstName lastName email department designation linkedUser"
+        "employeeCode firstName lastName email department designation linkedUser phone bankName bankAccountNumber epfNumber isActive employmentStatus joinedDate"
       )
       .sort({ createdAt: -1 });
 
@@ -141,7 +168,7 @@ const getPayrollById = async (req, res) => {
   try {
     const payroll = await Payroll.findById(req.params.id).populate(
       "employee",
-      "employeeCode firstName lastName email department designation linkedUser"
+      "employeeCode firstName lastName email department designation linkedUser phone bankName bankAccountNumber epfNumber isActive employmentStatus joinedDate"
     );
 
     if (!payroll) {
@@ -169,7 +196,7 @@ const getPayrollsByEmployee = async (req, res) => {
     const payrolls = await Payroll.find({ employee: req.params.employeeId })
       .populate(
         "employee",
-        "employeeCode firstName lastName email department designation linkedUser"
+        "employeeCode firstName lastName email department designation linkedUser phone bankName bankAccountNumber epfNumber isActive employmentStatus joinedDate"
       )
       .sort({ createdAt: -1 });
 
@@ -200,7 +227,7 @@ const getMyPayrolls = async (req, res) => {
     const payrolls = await Payroll.find({ employee: employee._id })
       .populate(
         "employee",
-        "employeeCode firstName lastName email department designation linkedUser"
+        "employeeCode firstName lastName email department designation linkedUser phone bankName bankAccountNumber epfNumber isActive employmentStatus joinedDate"
       )
       .sort({ payrollYear: -1, createdAt: -1 });
 
@@ -217,6 +244,198 @@ const getMyPayrolls = async (req, res) => {
   }
 };
 
+const updatePayroll = async (req, res) => {
+  try {
+    const payroll = await Payroll.findById(req.params.id).populate(
+      "employee",
+      "employeeCode firstName lastName email department designation linkedUser phone bankName bankAccountNumber epfNumber"
+    );
+
+    if (!payroll) {
+      return res.status(404).json({
+        success: false,
+        message: "Payroll not found",
+      });
+    }
+
+    const {
+      basicSalary,
+      allowance,
+      overtimeAmount,
+      bonusAmount,
+      deductionAmount,
+      paymentStatus,
+      note,
+    } = req.body;
+
+    const nextBasicSalary =
+      basicSalary !== undefined ? Number(basicSalary) : Number(payroll.basicSalary);
+
+    const nextAllowance =
+      allowance !== undefined ? Number(allowance) : Number(payroll.allowance);
+
+    const nextOvertime =
+      overtimeAmount !== undefined
+        ? Number(overtimeAmount)
+        : Number(payroll.overtimeAmount);
+
+    const nextBonus =
+      bonusAmount !== undefined ? Number(bonusAmount) : Number(payroll.bonusAmount);
+
+    const nextDeduction =
+      deductionAmount !== undefined
+        ? Number(deductionAmount)
+        : Number(payroll.deductionAmount);
+
+    const { grossSalary, netSalary } = calculatePayrollValues({
+      basicSalary: nextBasicSalary,
+      allowance: nextAllowance,
+      overtimeAmount: nextOvertime,
+      bonusAmount: nextBonus,
+      deductionAmount: nextDeduction,
+    });
+
+    if (netSalary < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Net salary cannot be negative",
+      });
+    }
+
+    payroll.basicSalary = nextBasicSalary;
+    payroll.allowance = nextAllowance;
+    payroll.overtimeAmount = nextOvertime;
+    payroll.bonusAmount = nextBonus;
+    payroll.deductionAmount = nextDeduction;
+    payroll.grossSalary = grossSalary;
+    payroll.netSalary = netSalary;
+
+    if (note !== undefined) {
+      payroll.note = note;
+    }
+
+    if (paymentStatus !== undefined) {
+      if (!["pending", "paid"].includes(paymentStatus)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid payment status",
+        });
+      }
+
+      payroll.paymentStatus = paymentStatus;
+      payroll.paidAt = paymentStatus === "paid" ? new Date() : null;
+    }
+
+    payroll.updatedBy = req.user._id;
+
+    await payroll.save();
+
+    const updatedPayroll = await Payroll.findById(payroll._id).populate(
+      "employee",
+      "employeeCode firstName lastName email department designation linkedUser phone bankName bankAccountNumber epfNumber isActive employmentStatus joinedDate"
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Payroll updated successfully",
+      data: updatedPayroll,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+const downloadPayrollPdf = async (req, res) => {
+  try {
+    const payroll = await Payroll.findById(req.params.id).populate(
+      "employee",
+      "employeeCode firstName lastName email department designation phone bankName bankAccountNumber epfNumber"
+    );
+
+    if (!payroll) {
+      return res.status(404).json({
+        success: false,
+        message: "Payroll not found",
+      });
+    }
+
+    const employeeName = `${payroll.employee.firstName} ${payroll.employee.lastName}`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="paysheet-${payroll.employee.employeeCode}-${payroll.payrollMonth}-${payroll.payrollYear}.pdf"`
+    );
+
+    const doc = new PDFDocument({ margin: 50 });
+
+    doc.pipe(res);
+
+    doc.fontSize(20).text("Tea Factory Management System", { align: "center" });
+    doc.moveDown(0.3);
+    doc.fontSize(16).text("Employee Paysheet", { align: "center" });
+    doc.moveDown(1.2);
+
+    doc.fontSize(12).text(`Payroll Number: ${payroll.payrollNumber}`);
+    doc.text(`Payroll Month: ${payroll.payrollMonth}`);
+    doc.text(`Payroll Year: ${payroll.payrollYear}`);
+    doc.text(`Generated Date: ${new Date().toLocaleDateString()}`);
+    doc.moveDown();
+
+    doc.fontSize(14).text("Employee Details", { underline: true });
+    doc.moveDown(0.5);
+    doc.fontSize(12).text(`Employee Code: ${payroll.employee.employeeCode}`);
+    doc.text(`Employee Name: ${employeeName}`);
+    doc.text(`Email: ${payroll.employee.email || "-"}`);
+    doc.text(`Phone: ${payroll.employee.phone || "-"}`);
+    doc.text(`Department: ${payroll.employee.department || "-"}`);
+    doc.text(`Designation: ${payroll.employee.designation || "-"}`);
+    doc.text(`EPF Number: ${payroll.employee.epfNumber || "-"}`);
+    doc.text(`Bank Name: ${payroll.employee.bankName || "-"}`);
+    doc.text(`Bank Account Number: ${payroll.employee.bankAccountNumber || "-"}`);
+    doc.moveDown();
+
+    doc.fontSize(14).text("Salary Breakdown", { underline: true });
+    doc.moveDown(0.5);
+    doc.fontSize(12).text(`Basic Salary: Rs. ${Number(payroll.basicSalary).toLocaleString()}`);
+    doc.text(`Allowance: Rs. ${Number(payroll.allowance).toLocaleString()}`);
+    doc.text(`Overtime Amount: Rs. ${Number(payroll.overtimeAmount).toLocaleString()}`);
+    doc.text(`Bonus Amount: Rs. ${Number(payroll.bonusAmount).toLocaleString()}`);
+    doc.text(`Deduction Amount: Rs. ${Number(payroll.deductionAmount).toLocaleString()}`);
+    doc.moveDown(0.6);
+    doc.text(`Gross Salary: Rs. ${Number(payroll.grossSalary).toLocaleString()}`);
+    doc.text(`Net Salary: Rs. ${Number(payroll.netSalary).toLocaleString()}`);
+    doc.moveDown();
+
+    doc.fontSize(14).text("Payment Information", { underline: true });
+    doc.moveDown(0.5);
+    doc.fontSize(12).text(`Payment Status: ${payroll.paymentStatus}`);
+    doc.text(
+      `Paid At: ${
+        payroll.paidAt ? new Date(payroll.paidAt).toLocaleString() : "Not paid yet"
+      }`
+    );
+    doc.text(`Note: ${payroll.note || "-"}`);
+
+    doc.moveDown(2);
+    doc.text("Authorized Signature: __________________________");
+    doc.moveDown(1.5);
+    doc.text("This is a system generated paysheet.", { align: "center" });
+
+    doc.end();
+  } catch (error) {
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  }
+};
+
 const downloadMyPayslip = async (req, res) => {
   try {
     const employee = await Employee.findOne({ linkedUser: req.user._id });
@@ -230,7 +449,7 @@ const downloadMyPayslip = async (req, res) => {
 
     const payroll = await Payroll.findById(req.params.id).populate(
       "employee",
-      "employeeCode firstName lastName email department designation"
+      "employeeCode firstName lastName email department designation phone bankName bankAccountNumber epfNumber"
     );
 
     if (!payroll) {
@@ -247,40 +466,8 @@ const downloadMyPayslip = async (req, res) => {
       });
     }
 
-    const payslipText = `
-Tea Factory Management System - Payslip
-
-Payroll Number: ${payroll.payrollNumber}
-Employee Code: ${payroll.employee.employeeCode}
-Employee Name: ${payroll.employee.firstName} ${payroll.employee.lastName}
-Email: ${payroll.employee.email}
-Department: ${payroll.employee.department}
-Designation: ${payroll.employee.designation}
-
-Payroll Month: ${payroll.payrollMonth}
-Payroll Year: ${payroll.payrollYear}
-
-Basic Salary: ${payroll.basicSalary}
-Allowance: ${payroll.allowance}
-Overtime Amount: ${payroll.overtimeAmount}
-Bonus Amount: ${payroll.bonusAmount}
-Deduction Amount: ${payroll.deductionAmount}
-Gross Salary: ${payroll.grossSalary}
-Net Salary: ${payroll.netSalary}
-Payment Status: ${payroll.paymentStatus}
-Paid At: ${payroll.paidAt ? new Date(payroll.paidAt).toISOString() : "Not paid yet"}
-Note: ${payroll.note || ""}
-
-Generated At: ${new Date().toISOString()}
-    `.trim();
-
-    res.setHeader("Content-Type", "text/plain");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="payslip-${payroll.payrollMonth}-${payroll.payrollYear}.txt"`
-    );
-
-    return res.status(200).send(payslipText);
+    req.params.id = payroll._id.toString();
+    return downloadPayrollPdf(req, res);
   } catch (error) {
     return res.status(500).json({
       success: false,
@@ -311,10 +498,7 @@ const updatePayrollStatus = async (req, res) => {
 
     payroll.paymentStatus = paymentStatus;
     payroll.updatedBy = req.user._id;
-
-    if (paymentStatus === "paid") {
-      payroll.paidAt = new Date();
-    }
+    payroll.paidAt = paymentStatus === "paid" ? new Date() : null;
 
     await payroll.save();
 
@@ -337,6 +521,8 @@ export {
   getPayrollById,
   getPayrollsByEmployee,
   getMyPayrolls,
+  updatePayroll,
+  downloadPayrollPdf,
   downloadMyPayslip,
   updatePayrollStatus,
 };
