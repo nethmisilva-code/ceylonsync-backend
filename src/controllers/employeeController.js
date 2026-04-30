@@ -6,6 +6,7 @@ const createEmployee = async (req, res) => {
       employeeCode,
       firstName,
       lastName,
+      dateofbirth,
       email,
       phone,
       nic,
@@ -25,6 +26,7 @@ const createEmployee = async (req, res) => {
       !employeeCode ||
       !firstName ||
       !lastName ||
+      dateofbirth,
       !email ||
       !phone ||
       !nic ||
@@ -63,6 +65,7 @@ const createEmployee = async (req, res) => {
       employeeCode: employeeCode.toUpperCase(),
       firstName,
       lastName,
+      dateofbirth,
       email: email.toLowerCase(),
       phone,
       nic,
@@ -197,6 +200,7 @@ const updateEmployee = async (req, res) => {
     const {
       firstName,
       lastName,
+      dateofbirth,
       email,
       phone,
       address,
@@ -234,6 +238,7 @@ const updateEmployee = async (req, res) => {
     employee.allowance = allowance ?? employee.allowance;
     employee.epfNumber = epfNumber ?? employee.epfNumber;
     employee.bankName = bankName ?? employee.bankName;
+    employee.dateofbirth = dateofbirth ?? employee.dateofbirth;
     employee.bankAccountNumber =
       bankAccountNumber ?? employee.bankAccountNumber;
     employee.linkedUser = linkedUser ?? employee.linkedUser;
