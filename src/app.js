@@ -22,20 +22,39 @@ import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
 
 const app = express();
 
-app.use(helmet());
+/* Security middleware */
+app.use(
+  helmet({
+    crossOriginResourcePolicy: false,
+  })
+);
+
+/* CORS middleware - fixed for Render + Expo + localhost */
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: [
+      "http://localhost:5173",
+      "http://localhost:8081",
+      "http://localhost:19006",
+      "https://ceylonsync-backend.onrender.com",
+    ],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
   })
 );
+
+app.options("*", cors());
+
 app.use(morgan("dev"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+/* Static uploads */
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
+/* Root route */
 app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
@@ -43,6 +62,7 @@ app.get("/", (req, res) => {
   });
 });
 
+/* Health route */
 app.get("/api/health", (req, res) => {
   res.status(200).json({
     success: true,
@@ -54,6 +74,7 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+/* API routes */
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/products", productRoutes);
@@ -68,6 +89,7 @@ app.use("/api/employees", employeeRoutes);
 app.use("/api/payrolls", payrollRoutes);
 app.use("/api/reports", reportRoutes);
 
+/* Error handlers */
 app.use(notFound);
 app.use(errorHandler);
 
