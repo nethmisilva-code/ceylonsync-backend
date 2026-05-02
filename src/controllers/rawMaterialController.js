@@ -74,11 +74,11 @@ const getAllRawMaterials = async (req, res) => {
     }
 
     if (inStock !== undefined) {
-      filter.inStock = inStock === "true";
+      filter.inStock = inStock === true;
     }
 
     if (isActive !== undefined) {
-      filter.isActive = isActive === "true";
+      filter.isActive = isActive === true;
     }
 
     const materials = await RawMaterial.find(filter).sort({ createdAt: -1 });

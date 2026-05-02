@@ -111,7 +111,7 @@ const getAllEmployees = async (req, res) => {
     }
 
     if (isActive !== undefined) {
-      filter.isActive = isActive === "true";
+      filter.isActive = isActive === true;
     }
 
     if (search) {

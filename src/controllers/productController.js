@@ -78,11 +78,11 @@ const getAllProducts = asyncHandler(async (req, res) => {
   }
 
   if (isActive !== undefined) {
-    filter.isActive = isActive === "true";
+    filter.isActive = isActive === true;
   }
 
   if (inStock !== undefined) {
-    filter.inStock = inStock === "true";
+    filter.inStock = inStock === true;
   }
 
   const total = await Product.countDocuments(filter);
